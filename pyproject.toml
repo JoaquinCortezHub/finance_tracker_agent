@@ -1,0 +1,32 @@
+[project]
+name = "finance-tracker-agent"
+version = "0.1.0"
+description = "Multi-agent system for personal finance management with Telegram integration and Excel tracking"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "agno>=1.1.0",
+    "python-telegram-bot>=21.0",
+    "openpyxl>=3.1.0",
+    "pandas>=2.2.0",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+    "plotly>=5.18.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "asyncio-mqtt>=0.16.0"
+]
+
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "black>=24.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.8.0"
+]
