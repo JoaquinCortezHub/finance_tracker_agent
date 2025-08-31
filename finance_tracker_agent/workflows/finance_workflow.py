@@ -42,20 +42,28 @@ class FinanceTrackerWorkflow(Workflow):
             user_message = update.message.text
             user_id = str(update.effective_user.id)
             chat_id = str(update.effective_chat.id)
+            username = update.effective_user.username or "unknown"
             
+            print(f"\n📱 [TELEGRAM] Received message from @{username} (ID: {user_id})")
+            print(f"💬 [MESSAGE] '{user_message}'")
             logger.info(f"Processing message from user {user_id}: {user_message}")
             
             # Let the manager agent handle all message processing
+            print(f"🎯 [WORKFLOW] Delegating to MANAGER agent...")
             response = await self.manager_agent.process_user_message(
                 message=user_message,
                 user_id=user_id,
                 chat_id=chat_id
             )
             
+            print(f"📤 [WORKFLOW] Sending response ({len(response)} characters)")
+            print(f"📤 [RESPONSE_PREVIEW] {response[:100]}{'...' if len(response) > 100 else ''}")
+            
             return response
         
         except Exception as e:
             logger.error(f"Error handling Telegram message: {e}")
+            print(f"❌ [WORKFLOW] ERROR: {str(e)}")
             return f"❌ Sorry, I encountered an error processing your message. Please try again."
     
     async def get_balance_summary(self) -> str:

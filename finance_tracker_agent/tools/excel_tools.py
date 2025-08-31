@@ -321,8 +321,11 @@ class ExcelFinanceManager(Toolkit):
     def set_user_balance(self, balance: float) -> Dict[str, Any]:
         """Set user's current balance in the User Setup sheet."""
         try:
+            print(f"💾 [EXCEL] Setting user balance to ${balance:,.2f}")
+            
             # Create User Setup sheet if it doesn't exist
             if "User Setup" not in self.workbook.sheetnames:
+                print(f"📋 [EXCEL] Creating new 'User Setup' sheet...")
                 setup_sheet = self.workbook.create_sheet("User Setup")
                 setup_sheet.cell(row=1, column=1, value="Setting")
                 setup_sheet.cell(row=1, column=2, value="Value")
@@ -332,24 +335,35 @@ class ExcelFinanceManager(Toolkit):
                     cell = setup_sheet.cell(row=1, column=col)
                     cell.font = Font(bold=True)
                     cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+                print(f"✅ [EXCEL] 'User Setup' sheet created with headers")
             else:
                 setup_sheet = self.workbook["User Setup"]
+                print(f"📋 [EXCEL] Using existing 'User Setup' sheet")
             
             # Find or create balance row
             balance_row = None
+            print(f"🔍 [EXCEL] Searching for existing balance row...")
             for row in range(2, setup_sheet.max_row + 2):
-                if setup_sheet.cell(row=row, column=1).value == "Current Balance":
+                cell_value = setup_sheet.cell(row=row, column=1).value
+                print(f"🔍 [EXCEL] Row {row}, Col 1: '{cell_value}'")
+                if cell_value == "Current Balance":
                     balance_row = row
+                    print(f"✅ [EXCEL] Found existing balance row: {row}")
                     break
             
             if balance_row is None:
                 balance_row = setup_sheet.max_row + 1
                 setup_sheet.cell(row=balance_row, column=1, value="Current Balance")
+                print(f"📝 [EXCEL] Created new balance row: {balance_row}")
             
+            # Set the balance and timestamp
             setup_sheet.cell(row=balance_row, column=2, value=balance)
             setup_sheet.cell(row=balance_row, column=3, value=datetime.now().strftime("%Y-%m-%d %H:%M"))
+            print(f"💾 [EXCEL] Balance written to row {balance_row}: ${balance:,.2f}")
             
+            print(f"💾 [EXCEL] Saving workbook...")
             self.save_workbook()
+            print(f"✅ [EXCEL] Workbook saved successfully!")
             
             return {
                 "success": True,
@@ -358,41 +372,77 @@ class ExcelFinanceManager(Toolkit):
             
         except Exception as e:
             logger.error(f"Failed to set user balance: {e}")
+            print(f"❌ [EXCEL] ERROR setting balance: {str(e)}")
             return {"success": False, "error": str(e)}
 
     def get_user_setup_status(self) -> Dict[str, Any]:
         """Check if user has completed setup (balance and budgets)."""
         try:
+            print(f"🔍 [EXCEL] Checking user setup status...")
             has_balance = False
             has_budgets = False
+            balance_value = None
+            budget_count = 0
             
             # Check for balance in User Setup sheet
+            print(f"📋 [EXCEL] Available sheets: {self.workbook.sheetnames}")
+            
             if "User Setup" in self.workbook.sheetnames:
+                print(f"✅ [EXCEL] 'User Setup' sheet exists, checking for balance...")
                 setup_sheet = self.workbook["User Setup"]
+                print(f"📏 [EXCEL] User Setup sheet has {setup_sheet.max_row} rows")
+                
                 for row in range(2, setup_sheet.max_row + 1):
-                    if setup_sheet.cell(row=row, column=1).value == "Current Balance":
-                        balance_value = setup_sheet.cell(row=row, column=2).value
-                        if balance_value is not None and balance_value > 0:
+                    setting_name = setup_sheet.cell(row=row, column=1).value
+                    setting_value = setup_sheet.cell(row=row, column=2).value
+                    print(f"🔍 [EXCEL] Row {row}: '{setting_name}' = '{setting_value}'")
+                    
+                    if setting_name == "Current Balance":
+                        balance_value = setting_value
+                        if setting_value is not None and setting_value > 0:
                             has_balance = True
+                            print(f"✅ [EXCEL] Balance found: ${setting_value:,.2f}")
                         break
+                        
+                if not has_balance:
+                    print(f"❌ [EXCEL] No valid balance found in User Setup sheet")
+            else:
+                print(f"❌ [EXCEL] 'User Setup' sheet does not exist")
             
             # Check for budgets in Budget sheet
             if "Budget" in self.workbook.sheetnames:
+                print(f"✅ [EXCEL] 'Budget' sheet exists, checking for budgets...")
                 budget_sheet = self.workbook["Budget"]
+                print(f"📏 [EXCEL] Budget sheet has {budget_sheet.max_row} rows")
+                
                 for row in range(2, budget_sheet.max_row + 1):
+                    category = budget_sheet.cell(row=row, column=1).value
                     budget_amount = budget_sheet.cell(row=row, column=2).value
+                    print(f"🔍 [EXCEL] Budget row {row}: '{category}' = ${budget_amount}")
+                    
                     if budget_amount is not None and budget_amount > 0:
                         has_budgets = True
-                        break
+                        budget_count += 1
+                        
+                print(f"📊 [EXCEL] Found {budget_count} valid budgets")
+            else:
+                print(f"❌ [EXCEL] 'Budget' sheet does not exist")
             
-            return {
+            setup_complete = has_balance and has_budgets
+            result = {
                 "has_balance": has_balance,
                 "has_budgets": has_budgets,
-                "setup_complete": has_balance and has_budgets
+                "setup_complete": setup_complete,
+                "balance_value": balance_value,
+                "budget_count": budget_count
             }
+            
+            print(f"📊 [EXCEL] Final setup status: {result}")
+            return result
             
         except Exception as e:
             logger.error(f"Failed to get user setup status: {e}")
+            print(f"❌ [EXCEL] ERROR checking setup status: {str(e)}")
             return {
                 "has_balance": False,
                 "has_budgets": False,

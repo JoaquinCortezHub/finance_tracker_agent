@@ -165,37 +165,57 @@ Current system configuration:
         Handles state management, intent classification, and agent delegation.
         """
         try:
+            print(f"\n🤖 [MANAGER] Processing message from user {user_id}: '{message}'")
+            
             # Initialize user state if new
             if user_id not in self.user_states:
+                print(f"🆕 [MANAGER] New user detected, initializing...")
                 await self._initialize_new_user(user_id)
             
             current_state = self.user_states[user_id]
+            print(f"👤 [MANAGER] User {user_id} current state: {current_state.value}")
             
             # Handle onboarding flow
             if current_state != UserState.ACTIVE:
-                return await self._handle_onboarding_message(
+                print(f"📝 [MANAGER] Delegating to ONBOARDING agent (state: {current_state.value})")
+                response = await self._handle_onboarding_message(
                     message, user_id, chat_id, current_state
                 )
+                # Check if state changed after onboarding step
+                new_state = self.user_states.get(user_id, current_state)
+                if new_state != current_state:
+                    print(f"🔄 [MANAGER] User state changed: {current_state.value} → {new_state.value}")
+                print(f"✅ [MANAGER] Onboarding response ready ({len(response)} chars)")
+                return response
             
             # For active users, classify intent and delegate
+            print(f"🎯 [MANAGER] User is ACTIVE, classifying intent...")
             intent = await self._classify_intent(message, user_id)
-            return await self._delegate_to_agent(message, intent, user_id, chat_id)
+            print(f"🎯 [MANAGER] Intent classified as: {intent}")
+            response = await self._delegate_to_agent(message, intent, user_id, chat_id)
+            print(f"✅ [MANAGER] Specialized agent response ready ({len(response)} chars)")
+            return response
             
         except Exception as e:
             logger.error(f"Error processing user message: {e}")
+            print(f"❌ [MANAGER] ERROR: {str(e)}")
             return "❌ I encountered an error processing your request. Please try again in a moment."
 
     async def _initialize_new_user(self, user_id: str) -> None:
         """Initialize a new user and determine their onboarding needs."""
         try:
+            print(f"🔍 [MANAGER] Checking existing user data...")
             # Check if user has existing data
             user_data = self.excel_manager.get_user_setup_status()
+            print(f"📊 [MANAGER] User setup status: {user_data}")
             
             if user_data.get("has_balance") and user_data.get("has_budgets"):
                 self.user_states[user_id] = UserState.ACTIVE
+                print(f"🏆 [MANAGER] User {user_id} recognized as RETURNING user (ACTIVE state)")
                 logger.info(f"User {user_id} recognized as returning user")
             else:
                 self.user_states[user_id] = UserState.NEW_USER
+                print(f"🆕 [MANAGER] User {user_id} set to NEW_USER (needs onboarding)")
                 logger.info(f"New user {user_id} initialized for onboarding")
                 
             # Initialize conversation context
@@ -203,6 +223,7 @@ Current system configuration:
             
         except Exception as e:
             logger.error(f"Failed to initialize user {user_id}: {e}")
+            print(f"❌ [MANAGER] Error initializing user, defaulting to NEW_USER: {e}")
             self.user_states[user_id] = UserState.NEW_USER
 
     async def _handle_onboarding_message(
@@ -214,59 +235,174 @@ Current system configuration:
     ) -> str:
         """Handle messages during user onboarding flow."""
         try:
+            print(f"🎓 [ONBOARDING] Processing step for state: {current_state.value}")
+            
             response = await self.onboarding_agent.process_onboarding_step(
                 message=message,
                 user_id=user_id,
                 current_state=current_state.value
             )
             
-            # Update user state based on onboarding progress
-            if "onboarding_complete" in response.lower():
-                self.user_states[user_id] = UserState.ACTIVE
-                logger.info(f"User {user_id} completed onboarding")
-            elif "balance_set" in response.lower():
-                self.user_states[user_id] = UserState.AWAITING_BUDGETS
-            elif "awaiting_balance" in response.lower():
+            print(f"📝 [ONBOARDING] Response received, checking for state transitions...")
+            
+            # Check Excel state to determine actual progress (more reliable than text parsing)
+            user_setup_status = self.excel_manager.get_user_setup_status()
+            print(f"💾 [EXCEL] Current setup status: {user_setup_status}")
+            
+            # Update user state based on actual data in Excel AND response content
+            old_state = current_state
+            
+            # Check for special state transition indicators in response
+            if "awaiting_balance" in response.lower():
                 self.user_states[user_id] = UserState.AWAITING_BALANCE
+                print(f"🎯 [MANAGER] Response indicates → AWAITING_BALANCE")
+            elif user_setup_status.get("setup_complete", False):
+                self.user_states[user_id] = UserState.ACTIVE
+                print(f"🎉 [MANAGER] User {user_id} completed onboarding → ACTIVE")
+                logger.info(f"User {user_id} completed onboarding")
+            elif user_setup_status.get("has_balance", False) and not user_setup_status.get("has_budgets", False):
+                self.user_states[user_id] = UserState.AWAITING_BUDGETS
+                print(f"💰 [MANAGER] User {user_id} has balance → AWAITING_BUDGETS")
+            elif not user_setup_status.get("has_balance", False) and current_state == UserState.NEW_USER:
+                # After welcome message, transition to awaiting balance
+                self.user_states[user_id] = UserState.AWAITING_BALANCE
+                print(f"⏳ [MANAGER] New user welcomed → AWAITING_BALANCE")
+            else:
+                # Keep current state if no clear transition
+                print(f"🔄 [MANAGER] User {user_id} staying in state: {current_state.value}")
+            
+            # Log state transitions
+            new_state = self.user_states[user_id]
+            if new_state != old_state:
+                print(f"🔄 [STATE] {user_id}: {old_state.value} → {new_state.value}")
                 
             return response
             
         except Exception as e:
             logger.error(f"Error handling onboarding for user {user_id}: {e}")
+            print(f"❌ [ONBOARDING] ERROR: {str(e)}")
             return "❌ There was an issue with your setup. Let me help you start over."
 
     async def _classify_intent(self, message: str, user_id: str) -> str:
-        """Classify user message intent using GPT-5's reasoning capabilities."""
+        """Classify user message intent using hybrid approach (keywords + AI fallback)."""
+        try:
+            print(f"🎯 [INTENT] Classifying message: '{message}'")
+            message_lower = message.lower().strip()
+            
+            # First, try keyword-based classification (faster and more reliable)
+            intent = self._classify_intent_keywords(message_lower)
+            if intent != "UNCLEAR":
+                print(f"🎯 [INTENT] Keyword classification: {intent}")
+                return intent
+            
+            # If keywords fail, try AI classification with better prompting
+            print(f"🎯 [INTENT] Keywords unclear, trying AI classification...")
+            ai_intent = await self._classify_intent_ai(message)
+            print(f"🎯 [INTENT] AI classification: {ai_intent}")
+            
+            return ai_intent
+            
+        except Exception as e:
+            logger.error(f"Failed to classify intent: {e}")
+            print(f"❌ [INTENT] ERROR: {str(e)}")
+            return "GENERAL"
+
+    def _classify_intent_keywords(self, message_lower: str) -> str:
+        """Fast keyword-based intent classification."""
+        try:
+            print(f"🔍 [KEYWORDS] Analyzing: '{message_lower}'")
+            
+            # Expense indicators (highest priority)
+            expense_keywords = [
+                "spent", "paid", "bought", "cost", "expense", "purchase", "transaction",
+                "$", "dollars", "money", "bill", "receipt", "lunch", "dinner", 
+                "gas", "groceries", "coffee", "shopping", "restaurant"
+            ]
+            
+            # Budget indicators
+            budget_keywords = [
+                "budget", "limit", "allowance", "allocation", "set budget", 
+                "increase budget", "decrease budget", "modify budget", "change budget"
+            ]
+            
+            # Balance/Summary indicators  
+            balance_keywords = [
+                "balance", "total", "summary", "how much", "spent so far",
+                "current spending", "month total", "spending summary"
+            ]
+            
+            # Insights/Report indicators
+            insights_keywords = [
+                "report", "analysis", "insights", "trends", "patterns", 
+                "monthly report", "spending report", "financial report", "breakdown"
+            ]
+            
+            # Help indicators
+            help_keywords = [
+                "help", "commands", "what can you", "how do i", "instructions",
+                "guide", "tutorial", "features", "capabilities"
+            ]
+            
+            # Check expense first (most common)
+            if any(kw in message_lower for kw in expense_keywords):
+                print(f"✅ [KEYWORDS] Detected EXPENSE")
+                return "EXPENSE"
+                
+            # Check budget
+            if any(kw in message_lower for kw in budget_keywords):
+                print(f"✅ [KEYWORDS] Detected BUDGET")
+                return "BUDGET"
+                
+            # Check balance/summary
+            if any(kw in message_lower for kw in balance_keywords):
+                print(f"✅ [KEYWORDS] Detected BALANCE")
+                return "BALANCE"
+                
+            # Check insights/reports
+            if any(kw in message_lower for kw in insights_keywords):
+                print(f"✅ [KEYWORDS] Detected INSIGHTS")
+                return "INSIGHTS"
+                
+            # Check help
+            if any(kw in message_lower for kw in help_keywords):
+                print(f"✅ [KEYWORDS] Detected HELP")
+                return "HELP"
+            
+            print(f"❓ [KEYWORDS] No clear match found")
+            return "UNCLEAR"
+            
+        except Exception as e:
+            logger.error(f"Error in keyword classification: {e}")
+            print(f"❌ [KEYWORDS] ERROR: {str(e)}")
+            return "UNCLEAR"
+
+    async def _classify_intent_ai(self, message: str) -> str:
+        """AI-powered intent classification with improved prompting."""
         try:
             classification_prompt = f"""
-<task>
-Classify the user's intent from their message for a personal finance management system.
-</task>
+You are an expert at understanding user intent for personal finance apps.
 
-<message>
-"{message}"
-</message>
+Analyze this message and determine the user's primary intent:
 
-<intent_options>
-1. EXPENSE - Logging expenses, recording transactions
-2. BUDGET - Managing budgets, checking limits, modifying allocations  
-3. INSIGHTS - Reports, analysis, spending patterns, recommendations
-4. BALANCE - Current balance, spending summaries, account status
-5. HELP - Commands, guidance, feature explanations
-6. GENERAL - Greetings, small talk, unclear requests
-</intent_options>
+Message: "{message}"
 
-<classification_rules>
-- Look for expense indicators: amounts, "spent", "paid", "bought", merchant names
-- Look for budget indicators: "budget", "limit", "allowance", category management
-- Look for insight indicators: "report", "analysis", "trends", "recommendations"
-- Look for balance indicators: "balance", "total", "summary", "how much"
-- Default to GENERAL for ambiguous messages
-</classification_rules>
+Intent Options:
+- EXPENSE: User wants to log/record a spending transaction
+- BUDGET: User wants to manage, check, or modify budgets  
+- BALANCE: User wants to see current spending totals or summaries
+- INSIGHTS: User wants reports, analysis, or spending insights
+- HELP: User needs assistance or wants to know available commands
+- GENERAL: Greetings, small talk, or unclear requests
 
-<output_format>
-Return only the intent category name (e.g., "EXPENSE", "BUDGET", etc.)
-</output_format>
+Examples:
+- "I spent 25 dollars on lunch" → EXPENSE
+- "What's my food budget?" → BUDGET  
+- "How much have I spent this month?" → BALANCE
+- "Show me my spending report" → INSIGHTS
+- "What commands are available?" → HELP
+- "Hello there" → GENERAL
+
+Respond with only the intent name (e.g., "EXPENSE").
 """
             
             response = await self.arun(classification_prompt)
@@ -275,13 +411,14 @@ Return only the intent category name (e.g., "EXPENSE", "BUDGET", etc.)
             # Validate intent
             valid_intents = ["EXPENSE", "BUDGET", "INSIGHTS", "BALANCE", "HELP", "GENERAL"]
             if intent not in valid_intents:
+                print(f"❌ [AI_INTENT] Invalid intent returned: {intent}, defaulting to GENERAL")
                 intent = "GENERAL"
             
-            logger.info(f"Classified message intent as: {intent}")
             return intent
             
         except Exception as e:
-            logger.error(f"Failed to classify intent: {e}")
+            logger.error(f"AI intent classification failed: {e}")
+            print(f"❌ [AI_INTENT] ERROR: {str(e)}")
             return "GENERAL"
 
     async def _delegate_to_agent(
@@ -293,27 +430,45 @@ Return only the intent category name (e.g., "EXPENSE", "BUDGET", etc.)
     ) -> str:
         """Delegate message to appropriate specialized agent based on intent."""
         try:
+            print(f"🎯 [DELEGATE] Routing {intent} intent to specialized agent")
+            
             if intent == "EXPENSE":
+                print(f"💸 [DELEGATE] → EXPENSE agent")
                 return await self.expense_agent.process_expense_message(message)
                 
             elif intent == "BUDGET":
+                print(f"🎯 [DELEGATE] → BUDGET agent")
                 return await self.budget_agent.process_budget_command(message)
                 
             elif intent == "INSIGHTS":
+                print(f"📊 [DELEGATE] → INSIGHTS agent")
                 return await self.insights_agent.generate_monthly_report()
                 
             elif intent == "BALANCE":
+                print(f"💰 [DELEGATE] → Balance summary")
                 return await self._get_balance_summary()
                 
             elif intent == "HELP":
+                print(f"❓ [DELEGATE] → Help message")
                 return self._get_help_message()
                 
-            else:  # GENERAL
-                return await self._handle_general_message(message, user_id)
+            else:  # GENERAL or unknown
+                print(f"💬 [DELEGATE] → General handler")
+                return await self._handle_general_message(message, user_id, intent)
                 
         except Exception as e:
             logger.error(f"Error delegating to agent for intent {intent}: {e}")
-            return f"❌ I had trouble processing your {intent.lower()} request. Please try rephrasing."
+            print(f"❌ [DELEGATE] ERROR with {intent}: {str(e)}")
+            
+            # Provide helpful fallback based on intent
+            if intent == "EXPENSE":
+                return "❌ I had trouble logging your expense. Please try: 'I spent $25 on lunch'"
+            elif intent == "BUDGET":
+                return "❌ I had trouble with your budget request. Please try: 'What's my food budget?' or 'Set food budget to $400'"
+            elif intent == "BALANCE":
+                return "❌ I had trouble getting your balance. Please try again or contact support."
+            else:
+                return "❌ I had trouble processing your request. Please try rephrasing or type 'help' for available commands."
 
     async def _get_balance_summary(self) -> str:
         """Get comprehensive balance summary."""
@@ -404,40 +559,161 @@ Just type naturally:
 • Monthly reports help track your financial health
 """
 
-    async def _handle_general_message(self, message: str, user_id: str) -> str:
-        """Handle general messages, greetings, and unclear requests."""
-        message_lower = message.lower()
-        
-        if any(greeting in message_lower for greeting in ["hi", "hello", "hey", "good morning", "good evening"]):
-            return """
+    async def _handle_general_message(self, message: str, user_id: str, intent: str) -> str:
+        """Handle general messages with loop prevention and context awareness."""
+        try:
+            message_lower = message.lower().strip()
+            print(f"💬 [GENERAL] Handling general message: '{message_lower}'")
+            
+            # Track conversation context to prevent loops
+            context = self.conversation_context.get(user_id, [])
+            recent_responses = [msg.get("response_type") for msg in context[-3:]]  # Last 3 messages
+            
+            print(f"🔍 [GENERAL] Recent response types: {recent_responses}")
+            
+            # Detect greeting loops
+            if recent_responses.count("greeting") >= 2:
+                print(f"🔄 [GENERAL] Loop detected! Redirecting to concrete help")
+                return """
+🔄 **I notice we're going in circles!** Let me be more specific about how I can help:
+
+**Try one of these exact phrases:**
+• "I spent 25 dollars on lunch" (to log an expense)
+• "How much have I spent this month?" (to check balance)
+• "Set food budget to 400" (to set a budget)
+• "Show me my spending report" (to get insights)
+
+**Or tell me what you're trying to accomplish and I'll guide you step by step!** 💪
+"""
+            
+            # Handle specific message types
+            if any(greeting in message_lower for greeting in ["hi", "hello", "hey", "good morning", "good evening"]):
+                print(f"👋 [GENERAL] Greeting detected")
+                # Add to context
+                self._add_to_context(user_id, message, "greeting")
+                
+                return """
 👋 **Hello! I'm your Personal Finance Assistant**
 
 I'm here to help you track expenses, manage budgets, and gain insights into your spending habits.
 
-**Quick Start:**
-• Just tell me about your expenses: "Spent $25 on lunch"
-• Check your balance: `/balance`
-• Set up budgets: `/budget`
-• Get help: `/help`
+**Most common tasks:**
+• **Log expense**: "I spent $25 on lunch"
+• **Check spending**: "How much have I spent this month?"
+• **Set budget**: "Set food budget to $400"
 
-What would you like to do today? 💰
+**What would you like to do?** (Just tell me naturally!)
 """
-        
-        elif any(thanks in message_lower for thanks in ["thank", "thanks", "thx"]):
-            return "🙏 You're welcome! Happy to help with your finances. Need anything else?"
-        
-        else:
-            return """
-🤔 I'm not sure what you'd like to do. Here are some things I can help with:
+            
+            elif any(thanks in message_lower for thanks in ["thank", "thanks", "thx"]):
+                print(f"🙏 [GENERAL] Thanks detected")
+                self._add_to_context(user_id, message, "thanks")
+                return "🙏 You're welcome! Need help with anything else? Just tell me what you want to do!"
+            
+            elif any(unclear in message_lower for unclear in ["what", "how", "help", "confused", "don't understand"]):
+                print(f"❓ [GENERAL] User seems confused, providing specific help")
+                self._add_to_context(user_id, message, "confused")
+                
+                return """
+💡 **Let me help you get started!**
 
-💸 **Log an expense**: "Spent $20 on groceries"
-💰 **Check balance**: `/balance`
-📊 **View reports**: `/report`
-🎯 **Manage budgets**: `/budget`
-❓ **Get help**: `/help`
+**Here are the exact things you can say:**
 
-Just let me know what you need! 😊
+💸 **To log expenses** (most common):
+• "I spent 25 dollars on lunch"
+• "Paid $40 for gas"
+• "Coffee was $4.50"
+
+💰 **To check your spending**:
+• "How much have I spent this month?"
+• "What's my balance?"
+
+🎯 **To manage budgets**:
+• "Set food budget to $400"
+• "What's my food budget?"
+
+**Just pick one and try it!** I'll guide you from there. 😊
 """
+            
+            else:
+                print(f"🤔 [GENERAL] Unclear message, providing helpful suggestions")
+                self._add_to_context(user_id, message, "unclear")
+                
+                # Try to be more helpful by analyzing the message
+                response = self._provide_contextual_help(message_lower)
+                return response
+                
+        except Exception as e:
+            logger.error(f"Error handling general message: {e}")
+            print(f"❌ [GENERAL] ERROR: {str(e)}")
+            return "❌ I'm having trouble understanding. Try typing 'help' or tell me specifically what you want to do."
+
+    def _add_to_context(self, user_id: str, message: str, response_type: str) -> None:
+        """Add message to conversation context for loop detection."""
+        try:
+            if user_id not in self.conversation_context:
+                self.conversation_context[user_id] = []
+            
+            self.conversation_context[user_id].append({
+                "message": message,
+                "response_type": response_type,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            # Keep only last 10 messages to prevent memory bloat
+            self.conversation_context[user_id] = self.conversation_context[user_id][-10:]
+            
+        except Exception as e:
+            logger.error(f"Error adding to context: {e}")
+
+    def _provide_contextual_help(self, message_lower: str) -> str:
+        """Provide contextual help based on message content."""
+        try:
+            # Look for partial matches that might indicate intent
+            if any(word in message_lower for word in ["money", "cost", "price", "buy", "purchase"]):
+                return """
+💡 **It sounds like you might want to log an expense!**
+
+**Try saying:**
+• "I spent $[amount] on [item]"
+• For example: "I spent 25 dollars on lunch"
+
+**Or if you want to check spending:**
+• "How much have I spent this month?"
+
+Which one sounds right? 🤔
+"""
+            
+            elif any(word in message_lower for word in ["budget", "limit", "allowance"]):
+                return """
+💡 **It sounds like you want to work with budgets!**
+
+**Try saying:**
+• "Set [category] budget to $[amount]"
+• For example: "Set food budget to 400"
+• Or: "What's my food budget?"
+
+**Want to see all your budgets?**
+• "Show me my budgets"
+
+Which one would help? 🎯
+"""
+            
+            else:
+                return """
+🤔 **I'm not quite sure what you need, but here are the main things I can do:**
+
+💸 **Track expenses**: "I spent $25 on lunch"
+💰 **Check balance**: "How much have I spent?"
+🎯 **Manage budgets**: "Set food budget to $400"
+📊 **Generate reports**: "Show me my spending report"
+
+**Just tell me what you want to accomplish!** I'll help you get there. 😊
+"""
+                
+        except Exception as e:
+            logger.error(f"Error providing contextual help: {e}")
+            return "💡 Try saying something like 'I spent $25 on lunch' or 'How much have I spent this month?'"
 
     def get_user_state(self, user_id: str) -> Optional[str]:
         """Get current user state for external monitoring."""

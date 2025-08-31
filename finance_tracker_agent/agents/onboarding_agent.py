@@ -128,24 +128,32 @@ Use **clear formatting** with:
     ) -> str:
         """Process a single onboarding step based on current user state."""
         try:
+            print(f"🎓 [ONBOARDING] Processing step - State: {current_state}, Message: '{message}'")
+            
             if current_state == "new_user":
+                print(f"🆕 [ONBOARDING] Welcoming new user...")
                 return await self._welcome_new_user()
                 
             elif current_state == "awaiting_balance":
+                print(f"💰 [ONBOARDING] Processing balance setup...")
                 return await self._process_balance_setup(message, user_id)
                 
             elif current_state == "awaiting_budgets":
+                print(f"🎯 [ONBOARDING] Processing budget setup...")
                 return await self._process_budget_setup(message, user_id)
                 
             else:
+                print(f"❓ [ONBOARDING] Unexpected state: {current_state}")
                 return await self._handle_unexpected_state(current_state)
                 
         except Exception as e:
             logger.error(f"Error processing onboarding step: {e}")
+            print(f"❌ [ONBOARDING] ERROR in process_onboarding_step: {str(e)}")
             return "❌ Something went wrong during setup. Let me help you restart this step."
 
     async def _welcome_new_user(self) -> str:
         """Welcome new users and start onboarding process."""
+        print(f"🎉 [ONBOARDING] Welcoming new user and transitioning to AWAITING_BALANCE")
         return """
 🎉 **Welcome to Your Personal Finance Tracker!**
 
@@ -167,15 +175,21 @@ Please tell me your current account balance. You can say:
 💡 *Don't worry - this information stays private and secure on your device.*
 
 What's your current balance?
+
+**Status:** awaiting_balance
 """
 
     async def _process_balance_setup(self, message: str, user_id: str) -> str:
         """Process user's balance setup message."""
         try:
+            print(f"💰 [ONBOARDING] Processing balance setup for message: '{message}'")
+            
             # Extract balance amount from message
             balance = await self._extract_balance_amount(message)
+            print(f"🔍 [ONBOARDING] Extracted balance: {balance}")
             
             if balance is None:
+                print(f"❌ [ONBOARDING] Failed to extract balance from: '{message}'")
                 return """
 🤔 I couldn't understand the balance amount. Let me help!
 
@@ -189,6 +203,7 @@ What's your current account balance?
 """
             
             if balance < 0:
+                print(f"❌ [ONBOARDING] Negative balance rejected: {balance}")
                 return """
 ⚠️ Balance cannot be negative. 
 
@@ -196,16 +211,21 @@ What's your current account balance?
 What's your current account balance?
 """
             
+            print(f"💾 [ONBOARDING] Saving balance ${balance:,.2f} to Excel...")
             # Save balance to Excel
             result = self.excel_manager.set_user_balance(balance)
+            print(f"💾 [EXCEL] Balance save result: {result}")
             
             if not result.get("success", False):
+                print(f"❌ [ONBOARDING] Failed to save balance: {result.get('error', 'Unknown error')}")
                 return f"""
 ❌ There was an issue saving your balance. Let me try to help.
 
 Please try entering your balance again, or contact support if the problem persists.
 What's your current account balance?
 """
+            
+            print(f"✅ [ONBOARDING] Balance ${balance:,.2f} saved successfully!")
             
             # Move to budget setup
             return f"""
@@ -230,139 +250,218 @@ Let's start with the most common ones. **How much would you like to budget for F
             
         except Exception as e:
             logger.error(f"Error processing balance setup: {e}")
+            print(f"❌ [ONBOARDING] ERROR in balance setup: {str(e)}")
             return "❌ There was an error processing your balance. Please try again."
 
     async def _extract_balance_amount(self, message: str) -> Optional[float]:
-        """Extract balance amount from user message using AI parsing."""
+        """Extract balance amount from user message using enhanced parsing."""
         try:
-            # First try simple regex patterns
+            print(f"🔍 [BALANCE_EXTRACT] Parsing message: '{message}'")
+            
+            # Clean the message for better parsing
+            clean_message = message.replace(',', '').replace('$', '')
+            print(f"🧹 [BALANCE_EXTRACT] Cleaned message: '{clean_message}'")
+            
+            # Enhanced regex patterns with debugging
             patterns = [
-                r'\$?(\d{1,3}(?:,\d{3})*(?:\.\d{2})?)',  # $1,500.00 format
-                r'(\d+(?:\.\d{2})?)',  # Simple decimal format
+                r'(?:balance|have|is)\s+.*?(\d+(?:\.\d{1,2})?)',  # "balance is 1500"
+                r'(\d+(?:\.\d{1,2})?)\s*(?:dollars?|bucks?|usd)?',  # "1500 dollars"
+                r'(\d{1,6}(?:\.\d{1,2})?)',  # Any reasonable number
             ]
             
-            for pattern in patterns:
-                matches = re.findall(pattern, message.replace(',', ''))
+            for i, pattern in enumerate(patterns):
+                print(f"🔍 [BALANCE_EXTRACT] Trying pattern {i+1}: {pattern}")
+                matches = re.findall(pattern, clean_message, re.IGNORECASE)
                 if matches:
+                    print(f"✅ [BALANCE_EXTRACT] Pattern {i+1} found matches: {matches}")
+                    for match in matches:
+                        try:
+                            balance = float(match)
+                            if 0.01 <= balance <= 999999.99:  # Reasonable balance range
+                                print(f"✅ [BALANCE_EXTRACT] Valid balance extracted: {balance}")
+                                return balance
+                            else:
+                                print(f"❌ [BALANCE_EXTRACT] Balance out of range: {balance}")
+                        except ValueError as ve:
+                            print(f"❌ [BALANCE_EXTRACT] Float conversion failed: {ve}")
+                            continue
+                else:
+                    print(f"❌ [BALANCE_EXTRACT] Pattern {i+1} no matches")
+            
+            # If regex fails, try simple number extraction
+            print(f"🎯 [BALANCE_EXTRACT] Regex failed, trying simple number extraction...")
+            numbers = re.findall(r'\d+(?:\.\d{1,2})?', clean_message)
+            print(f"🔢 [BALANCE_EXTRACT] Found numbers: {numbers}")
+            
+            if numbers:
+                for num_str in numbers:
                     try:
-                        return float(matches[0].replace(',', ''))
+                        balance = float(num_str)
+                        if 0.01 <= balance <= 999999.99:
+                            print(f"✅ [BALANCE_EXTRACT] Simple extraction successful: {balance}")
+                            return balance
                     except ValueError:
                         continue
             
-            # Use AI for complex parsing
-            extraction_prompt = f"""
-<task>
-Extract a balance amount from this user message.
-</task>
-
-<message>
-"{message}"
-</message>
-
-<instructions>
-- Look for monetary amounts, numbers, or balance indicators
-- Return only the numeric value as a float
-- Ignore negative numbers
-- If no valid balance found, return "NONE"
-</instructions>
-
-<examples>
-"My balance is $1,500" -> 1500.0
-"I have 2500 dollars" -> 2500.0
-"Current balance: 1,200.50" -> 1200.5
-"No money" -> NONE
-"I'm broke" -> NONE
-</examples>
-
-<output_format>
-Return only the number (e.g., "1500.0") or "NONE"
-</output_format>
-"""
+            # Last resort: try to find any decimal number
+            print(f"🔍 [BALANCE_EXTRACT] Final attempt - looking for any number...")
+            final_pattern = r'(\d+(?:\.\d+)?)'
+            final_matches = re.findall(final_pattern, message)
+            print(f"🔍 [BALANCE_EXTRACT] Final pattern matches: {final_matches}")
             
-            response = await self.arun(extraction_prompt)
-            response = response.strip()
+            if final_matches:
+                try:
+                    balance = float(final_matches[0])
+                    if balance > 0:
+                        print(f"✅ [BALANCE_EXTRACT] Final attempt successful: {balance}")
+                        return balance
+                except ValueError:
+                    pass
             
-            if response.upper() == "NONE":
-                return None
-                
-            try:
-                return float(response)
-            except ValueError:
-                return None
+            print(f"❌ [BALANCE_EXTRACT] All extraction methods failed")
+            return None
                 
         except Exception as e:
             logger.error(f"Error extracting balance amount: {e}")
+            print(f"❌ [BALANCE_EXTRACT] EXCEPTION: {str(e)}")
             return None
 
     async def _process_budget_setup(self, message: str, user_id: str) -> str:
         """Process budget setup messages with guided category-by-category approach."""
         try:
+            print(f"🎯 [BUDGET_SETUP] Processing message: '{message}'")
+            
             # Get current budget setup progress
             budget_status = self.excel_manager.get_budget_setup_progress()
+            print(f"📊 [BUDGET_SETUP] Current progress: {budget_status}")
             
             # Parse the user's response
             budget_response = await self._parse_budget_response(message)
+            print(f"🎯 [BUDGET_SETUP] Parsed response: {budget_response}")
             
             if budget_response["action"] == "skip":
+                print(f"⏭️ [BUDGET_SETUP] User wants to skip current category")
                 return await self._handle_budget_skip(budget_status)
             elif budget_response["action"] == "set_amount":
+                print(f"💰 [BUDGET_SETUP] User setting amount: {budget_response.get('amount')}")
                 return await self._handle_budget_amount(budget_response, budget_status)
             elif budget_response["action"] == "complete":
+                print(f"✅ [BUDGET_SETUP] User wants to complete setup")
                 return await self._complete_budget_setup()
+            elif budget_response["action"] == "question":
+                print(f"❓ [BUDGET_SETUP] User is asking a question")
+                return await self._handle_budget_question(budget_status, message)
             else:
+                print(f"❓ [BUDGET_SETUP] Need clarification from user")
                 return await self._handle_budget_clarification(budget_status)
                 
         except Exception as e:
             logger.error(f"Error processing budget setup: {e}")
+            print(f"❌ [BUDGET_SETUP] ERROR: {str(e)}")
             return "❌ There was an error setting up your budget. Let me help you continue."
 
     async def _parse_budget_response(self, message: str) -> Dict[str, Any]:
         """Parse user's budget response to determine action and amount."""
         try:
             message_lower = message.lower().strip()
+            print(f"🎯 [BUDGET_PARSE] Parsing message: '{message_lower}'")
             
-            # Check for skip/pass indicators
-            if any(skip_word in message_lower for skip_word in ["skip", "pass", "next", "don't use", "not needed"]):
+            # Check for skip/pass indicators (expanded list)
+            skip_indicators = [
+                "skip", "pass", "next", "don't use", "not needed", "none", "no", "0",
+                "don't want", "not interested", "skip this", "pass on this", "no budget"
+            ]
+            
+            if any(skip_word in message_lower for skip_word in skip_indicators):
+                print(f"⏭️ [BUDGET_PARSE] Detected skip command")
                 return {"action": "skip"}
             
-            # Check for completion indicators
-            if any(complete_word in message_lower for complete_word in ["done", "finished", "complete", "that's all"]):
+            # Check for completion indicators (expanded list)
+            complete_indicators = [
+                "done", "finished", "complete", "that's all", "finish", "end", 
+                "no more", "all done", "i'm done", "that's enough", "enough", "stop"
+            ]
+            
+            if any(complete_word in message_lower for complete_word in complete_indicators):
+                print(f"✅ [BUDGET_PARSE] Detected completion command")
                 return {"action": "complete"}
             
             # Try to extract budget amount
             amount = await self._extract_budget_amount(message)
             if amount is not None:
+                print(f"💰 [BUDGET_PARSE] Extracted budget amount: ${amount}")
                 return {"action": "set_amount", "amount": amount}
             
+            # Check if user is asking questions or being unclear
+            question_indicators = ["what", "how", "why", "which", "help", "?"]
+            if any(q in message_lower for q in question_indicators):
+                print(f"❓ [BUDGET_PARSE] User seems to be asking a question")
+                return {"action": "question"}
+            
+            print(f"❓ [BUDGET_PARSE] Message unclear, needs clarification")
             return {"action": "unclear"}
             
         except Exception as e:
             logger.error(f"Error parsing budget response: {e}")
+            print(f"❌ [BUDGET_PARSE] ERROR: {str(e)}")
             return {"action": "unclear"}
 
     async def _extract_budget_amount(self, message: str) -> Optional[float]:
         """Extract budget amount from user message."""
         try:
-            # Simple regex patterns for budget amounts
+            print(f"💰 [BUDGET_EXTRACT] Extracting amount from: '{message}'")
+            
+            # Clean the message for better parsing
+            clean_message = message.replace(',', '').replace('$', '').strip()
+            print(f"🧹 [BUDGET_EXTRACT] Cleaned message: '{clean_message}'")
+            
+            # Enhanced regex patterns with debugging
             patterns = [
-                r'\$?(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)',  # $500.00 format
-                r'(\d+)',  # Simple number
+                r'(?:budget|spend|allow)\s+.*?(\d+(?:\.\d{1,2})?)',  # "budget 500"
+                r'(\d+(?:\.\d{1,2})?)\s*(?:dollars?|bucks?|per month|monthly)?',  # "500 dollars"
+                r'(\d{1,4}(?:\.\d{1,2})?)',  # Any reasonable number
             ]
             
-            for pattern in patterns:
-                matches = re.findall(pattern, message.replace(',', ''))
+            for i, pattern in enumerate(patterns):
+                print(f"💰 [BUDGET_EXTRACT] Trying pattern {i+1}: {pattern}")
+                matches = re.findall(pattern, clean_message, re.IGNORECASE)
                 if matches:
+                    print(f"✅ [BUDGET_EXTRACT] Pattern {i+1} found matches: {matches}")
+                    for match in matches:
+                        try:
+                            amount = float(match)
+                            if 1 <= amount <= 50000:  # Reasonable budget range
+                                print(f"✅ [BUDGET_EXTRACT] Valid budget amount: ${amount}")
+                                return amount
+                            else:
+                                print(f"❌ [BUDGET_EXTRACT] Amount out of range: {amount}")
+                        except ValueError as ve:
+                            print(f"❌ [BUDGET_EXTRACT] Float conversion failed: {ve}")
+                            continue
+                else:
+                    print(f"❌ [BUDGET_EXTRACT] Pattern {i+1} no matches")
+            
+            # Final attempt: find any number
+            print(f"🎯 [BUDGET_EXTRACT] Final attempt - looking for any number...")
+            numbers = re.findall(r'\d+(?:\.\d+)?', clean_message)
+            print(f"🔢 [BUDGET_EXTRACT] Found numbers: {numbers}")
+            
+            if numbers:
+                for num_str in numbers:
                     try:
-                        amount = float(matches[0].replace(',', ''))
-                        if 0 < amount <= 10000:  # Reasonable budget range
+                        amount = float(num_str)
+                        if 1 <= amount <= 50000:
+                            print(f"✅ [BUDGET_EXTRACT] Final attempt successful: ${amount}")
                             return amount
                     except ValueError:
                         continue
             
+            print(f"❌ [BUDGET_EXTRACT] All extraction methods failed")
             return None
             
         except Exception as e:
             logger.error(f"Error extracting budget amount: {e}")
+            print(f"❌ [BUDGET_EXTRACT] EXCEPTION: {str(e)}")
             return None
 
     async def _handle_budget_amount(self, budget_response: Dict[str, Any], budget_status: Dict[str, Any]) -> str:
@@ -371,54 +470,121 @@ Return only the number (e.g., "1500.0") or "NONE"
             current_category = budget_status.get("current_category", "Food & Dining")
             amount = budget_response["amount"]
             
+            print(f"💰 [BUDGET_AMOUNT] Setting ${amount} for {current_category}")
+            
             # Save budget to Excel
             result = self.excel_manager.set_category_budget(current_category, amount)
+            print(f"💾 [BUDGET_AMOUNT] Excel save result: {result}")
             
             if not result.get("success", False):
+                print(f"❌ [BUDGET_AMOUNT] Failed to save budget: {result.get('error')}")
                 return f"❌ There was an issue setting your {current_category} budget. Please try again."
             
-            # Move to next category or complete
-            next_category = self._get_next_budget_category(budget_status)
+            # Update progress tracking
+            configured_count = budget_status.get("configured_count", 0) + 1
+            print(f"📊 [BUDGET_AMOUNT] Budget #{configured_count} configured")
             
-            if next_category:
-                return f"""
-✅ **{current_category}: ${amount:,.2f}/month set!**
+            # Check if we have enough budgets (minimum 2, or user can say done)
+            if configured_count >= 2:
+                print(f"✅ [BUDGET_AMOUNT] Minimum budgets met, offering completion")
+                # Move to next category or complete
+                next_category = self._get_next_budget_category(budget_status, current_category)
+                
+                if next_category:
+                    return f"""
+✅ **{current_category}: ${amount:,.2f}/month set!** ({configured_count} budgets created)
 
 📝 **Next: How much for {next_category}?**
 
-💡 *You can say "skip" if you don't use this category, or "done" if you want to finish setup.*
+💡 *You can say "skip" if you don't use this category, or "done" if you want to finish setup now.*
 """
+                else:
+                    print(f"🎯 [BUDGET_AMOUNT] No more priority categories, completing setup")
+                    return await self._complete_budget_setup()
             else:
-                return await self._complete_budget_setup()
+                # Need at least 2 budgets before allowing completion
+                next_category = self._get_next_budget_category(budget_status, current_category)
+                return f"""
+✅ **{current_category}: ${amount:,.2f}/month set!** ({configured_count}/2 minimum)
+
+📝 **Next: How much for {next_category}?**
+
+💡 *You can say "skip" if you don't use this category. We need at least 2 budgets before finishing setup.*
+"""
                 
         except Exception as e:
             logger.error(f"Error handling budget amount: {e}")
+            print(f"❌ [BUDGET_AMOUNT] ERROR: {str(e)}")
             return "❌ Error setting budget amount. Please try again."
 
     async def _handle_budget_skip(self, budget_status: Dict[str, Any]) -> str:
         """Handle skipping a budget category."""
-        current_category = budget_status.get("current_category", "Food & Dining")
-        next_category = self._get_next_budget_category(budget_status)
-        
-        if next_category:
-            return f"""
+        try:
+            current_category = budget_status.get("current_category", "Food & Dining")
+            configured_count = budget_status.get("configured_count", 0)
+            
+            print(f"⏭️ [BUDGET_SKIP] Skipping {current_category} (current count: {configured_count})")
+            
+            # Get next category
+            next_category = self._get_next_budget_category(budget_status, current_category)
+            
+            if next_category:
+                if configured_count >= 2:
+                    # User has minimum budgets, can complete if they want
+                    return f"""
 ⏭️ **Skipped {current_category}**
 
 📝 **Next: How much for {next_category}?**
 
-💡 *Say "skip" to skip this one too, or "done" to finish setup.*
+💡 *Say "skip" to skip this category too, or "done" to finish setup with your {configured_count} budgets.*
 """
-        else:
-            return await self._complete_budget_setup()
+                else:
+                    # Still need more budgets
+                    return f"""
+⏭️ **Skipped {current_category}**
+
+📝 **Next: How much for {next_category}?**
+
+💡 *Say "skip" to skip this category too. We need at least 2 budgets total (currently have {configured_count}).*
+"""
+            else:
+                # No more categories, check if we have minimum
+                if configured_count >= 2:
+                    print(f"✅ [BUDGET_SKIP] No more categories, completing with {configured_count} budgets")
+                    return await self._complete_budget_setup()
+                else:
+                    print(f"❌ [BUDGET_SKIP] Ran out of categories but only have {configured_count} budgets")
+                    return f"""
+⏭️ **Skipped {current_category}**
+
+❌ We've gone through all the main categories, but you only have {configured_count} budget(s) set up.
+
+**Let's go back to some categories you might have skipped:**
+• Transportation - for gas, parking, rides
+• Shopping - for general purchases
+• Entertainment - for movies, dining out
+
+**Please set a budget amount for any of these, or type "done" if you want to continue with just {configured_count} budget(s).**
+"""
+                    
+        except Exception as e:
+            logger.error(f"Error handling budget skip: {e}")
+            print(f"❌ [BUDGET_SKIP] ERROR: {str(e)}")
+            return "❌ Error processing skip. Let's continue with the next category."
 
     async def _complete_budget_setup(self) -> str:
         """Complete the budget setup process."""
         try:
+            print(f"🎉 [COMPLETE_SETUP] Completing budget setup and marking user as active")
+            
             # Mark user as fully onboarded
-            self.excel_manager.mark_user_setup_complete()
+            completion_result = self.excel_manager.mark_user_setup_complete()
+            print(f"💾 [COMPLETE_SETUP] Setup completion result: {completion_result}")
             
             # Get summary of created budgets
             budgets = self.excel_manager.get_user_budgets()
+            budget_count = len(budgets.get("budgets", [])) if budgets.get("success") else 0
+            
             budget_summary = ""
             
             if budgets.get("success") and budgets.get("budgets"):
@@ -426,11 +592,13 @@ Return only the number (e.g., "1500.0") or "NONE"
                 for budget in budgets["budgets"]:
                     budget_summary += f"• {budget['category']}: ${budget['amount']:,.2f}/month\n"
             
+            print(f"✅ [COMPLETE_SETUP] Setup completed with {budget_count} budgets")
+            
             return f"""
 🎉 **Setup Complete! Welcome to your Finance Tracker!**
 
 ✅ Account balance set
-✅ Budgets created
+✅ {budget_count} budgets created
 {budget_summary}
 
 🚀 **You're ready to start tracking expenses!**
@@ -438,7 +606,7 @@ Return only the number (e.g., "1500.0") or "NONE"
 **How to use your tracker:**
 • Just tell me about expenses: *"Spent $25 on lunch"*
 • Check your balance: `/balance`
-• View reports: `/report`
+• View reports: `/report`  
 • Modify budgets: `/budget`
 
 💡 **Pro tip:** I'll automatically categorize your expenses and alert you when you're approaching budget limits!
@@ -450,6 +618,7 @@ Return only the number (e.g., "1500.0") or "NONE"
             
         except Exception as e:
             logger.error(f"Error completing budget setup: {e}")
+            print(f"❌ [COMPLETE_SETUP] ERROR: {str(e)}")
             return "🎉 **Setup Complete!** You're ready to start tracking expenses. Just tell me what you spent money on!"
 
     def _format_categories_list(self) -> str:
@@ -460,27 +629,143 @@ Return only the number (e.g., "1500.0") or "NONE"
             formatted += f"{i}. {category}\n"
         return formatted.rstrip()
 
-    def _get_next_budget_category(self, budget_status: Dict[str, Any]) -> Optional[str]:
+    def _get_next_budget_category(self, budget_status: Dict[str, Any], current_category: Optional[str] = None) -> Optional[str]:
         """Get the next category for budget setup."""
-        # This is a simplified implementation
-        # In production, track which categories have been set
-        priority_categories = [
-            "Food & Dining",
-            "Transportation", 
-            "Shopping",
-            "Bills & Utilities",
-            "Entertainment"
-        ]
-        
-        current = budget_status.get("current_category", "")
         try:
-            current_index = priority_categories.index(current)
-            if current_index + 1 < len(priority_categories):
-                return priority_categories[current_index + 1]
-        except ValueError:
-            return priority_categories[0] if priority_categories else None
-        
-        return None
+            priority_categories = [
+                "Food & Dining",
+                "Transportation", 
+                "Shopping",
+                "Bills & Utilities",
+                "Entertainment"
+            ]
+            
+            # Get already configured categories to skip them
+            configured_categories = budget_status.get("configured_categories", [])
+            current = current_category or budget_status.get("current_category", "")
+            
+            print(f"🎯 [NEXT_CATEGORY] Current: '{current}', Configured: {configured_categories}")
+            
+            # Find current index
+            try:
+                current_index = priority_categories.index(current)
+                start_index = current_index + 1
+            except ValueError:
+                # Current category not in list, start from beginning
+                start_index = 0
+            
+            # Find next unconfigured category
+            for i in range(start_index, len(priority_categories)):
+                category = priority_categories[i]
+                if category not in configured_categories:
+                    print(f"🎯 [NEXT_CATEGORY] Next category: {category}")
+                    return category
+            
+            # No more unconfigured priority categories
+            print(f"🎯 [NEXT_CATEGORY] No more priority categories available")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting next budget category: {e}")
+            print(f"❌ [NEXT_CATEGORY] ERROR: {str(e)}")
+            return None
+
+    async def _handle_budget_clarification(self, budget_status: Dict[str, Any]) -> str:
+        """Handle unclear budget responses by asking for clarification."""
+        try:
+            current_category = budget_status.get("current_category", "Food & Dining")
+            configured_count = budget_status.get("configured_count", 0)
+            
+            print(f"❓ [BUDGET_CLARIFY] Need clarification for {current_category}")
+            
+            return f"""
+❓ I didn't understand your response for **{current_category}**.
+
+**Please tell me:**
+• A dollar amount (e.g., "200", "$300", "500 dollars")
+• "skip" if you don't want to budget for this category
+• "done" if you want to finish setup now ({configured_count} budgets created)
+
+**How much would you like to budget for {current_category} each month?**
+"""
+        except Exception as e:
+            logger.error(f"Error handling budget clarification: {e}")
+            print(f"❌ [BUDGET_CLARIFY] ERROR: {str(e)}")
+            return "❓ I didn't understand your response. Please try again with a dollar amount or say 'skip'."
+
+    async def _handle_budget_question(self, budget_status: Dict[str, Any], message: str) -> str:
+        """Handle questions during budget setup."""
+        try:
+            current_category = budget_status.get("current_category", "Food & Dining")
+            configured_count = budget_status.get("configured_count", 0)
+            message_lower = message.lower()
+            
+            print(f"❓ [BUDGET_QUESTION] Handling question about {current_category}: '{message}'")
+            
+            # Common questions and responses
+            if any(word in message_lower for word in ["how much", "what amount", "typical", "average", "recommend"]):
+                return f"""
+💡 **Budget suggestions for {current_category}:**
+
+• **Conservative**: $100-200/month
+• **Moderate**: $300-500/month  
+• **Higher**: $600+/month
+
+**Tips:**
+• Look at your last few months' spending in this category
+• Start lower - you can always adjust later
+• Consider your total income and other expenses
+
+**What amount works for your {current_category} budget?**
+"""
+            
+            elif any(word in message_lower for word in ["skip", "optional", "need"]):
+                return f"""
+💡 **About {current_category} budgets:**
+
+You can definitely skip categories you don't use much. We just need at least 2 budgets total to get started.
+
+**Current progress:** {configured_count} budgets created
+
+**Options:**
+• Set an amount: "300" or "$300"
+• Skip this category: "skip"
+• Finish setup: "done" (if you have 2+ budgets)
+
+**What would you like to do with {current_category}?**
+"""
+            
+            else:
+                # Generic help response
+                return f"""
+❓ **Budget Setup Help:**
+
+For **{current_category}**, you can:
+• Enter a dollar amount: "200", "$300", "500 dollars"
+• Skip this category: "skip"
+• Finish setup: "done" (you have {configured_count} budgets so far)
+
+**Common {current_category} expenses might include:**
+{self._get_category_examples(current_category)}
+
+**What amount would you like to budget for {current_category}?**
+"""
+                
+        except Exception as e:
+            logger.error(f"Error handling budget question: {e}")
+            print(f"❌ [BUDGET_QUESTION] ERROR: {str(e)}")
+            return "💡 You can enter a dollar amount, say 'skip', or 'done' to finish setup."
+
+    def _get_category_examples(self, category: str) -> str:
+        """Get examples for a budget category."""
+        examples = {
+            "Food & Dining": "• Groceries, restaurants, coffee, takeout",
+            "Transportation": "• Gas, parking, public transit, rideshares", 
+            "Shopping": "• Clothes, electronics, household items",
+            "Bills & Utilities": "• Rent, utilities, phone, insurance",
+            "Entertainment": "• Movies, subscriptions, dining out, hobbies"
+        }
+        return examples.get(category, "• Various expenses in this category")
 
     async def _handle_unexpected_state(self, state: str) -> str:
         """Handle unexpected onboarding states."""
