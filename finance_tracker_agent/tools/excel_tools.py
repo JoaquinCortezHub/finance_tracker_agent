@@ -5,13 +5,13 @@ import pandas as pd
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill, Border, Side
 from openpyxl.chart import LineChart, Reference, BarChart
-from agno.tools.base import Tool
+from agno.tools import Toolkit
 import logging
 
 logger = logging.getLogger(__name__)
 
 
-class ExcelFinanceManager(Tool):
+class ExcelFinanceManager(Toolkit):
     """Tool for managing financial data in Excel spreadsheets."""
     
     def __init__(self, file_path: Union[str, Path]):
@@ -318,6 +318,193 @@ class ExcelFinanceManager(Tool):
             logger.error(f"Failed to get budget status: {e}")
             return {"success": False, "error": str(e)}
     
+    def set_user_balance(self, balance: float) -> Dict[str, Any]:
+        """Set user's current balance in the User Setup sheet."""
+        try:
+            # Create User Setup sheet if it doesn't exist
+            if "User Setup" not in self.workbook.sheetnames:
+                setup_sheet = self.workbook.create_sheet("User Setup")
+                setup_sheet.cell(row=1, column=1, value="Setting")
+                setup_sheet.cell(row=1, column=2, value="Value")
+                setup_sheet.cell(row=1, column=3, value="Last Updated")
+                # Style headers
+                for col in range(1, 4):
+                    cell = setup_sheet.cell(row=1, column=col)
+                    cell.font = Font(bold=True)
+                    cell.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
+            else:
+                setup_sheet = self.workbook["User Setup"]
+            
+            # Find or create balance row
+            balance_row = None
+            for row in range(2, setup_sheet.max_row + 2):
+                if setup_sheet.cell(row=row, column=1).value == "Current Balance":
+                    balance_row = row
+                    break
+            
+            if balance_row is None:
+                balance_row = setup_sheet.max_row + 1
+                setup_sheet.cell(row=balance_row, column=1, value="Current Balance")
+            
+            setup_sheet.cell(row=balance_row, column=2, value=balance)
+            setup_sheet.cell(row=balance_row, column=3, value=datetime.now().strftime("%Y-%m-%d %H:%M"))
+            
+            self.save_workbook()
+            
+            return {
+                "success": True,
+                "message": f"Balance set to ${balance:,.2f}"
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to set user balance: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_user_setup_status(self) -> Dict[str, Any]:
+        """Check if user has completed setup (balance and budgets)."""
+        try:
+            has_balance = False
+            has_budgets = False
+            
+            # Check for balance in User Setup sheet
+            if "User Setup" in self.workbook.sheetnames:
+                setup_sheet = self.workbook["User Setup"]
+                for row in range(2, setup_sheet.max_row + 1):
+                    if setup_sheet.cell(row=row, column=1).value == "Current Balance":
+                        balance_value = setup_sheet.cell(row=row, column=2).value
+                        if balance_value is not None and balance_value > 0:
+                            has_balance = True
+                        break
+            
+            # Check for budgets in Budget sheet
+            if "Budget" in self.workbook.sheetnames:
+                budget_sheet = self.workbook["Budget"]
+                for row in range(2, budget_sheet.max_row + 1):
+                    budget_amount = budget_sheet.cell(row=row, column=2).value
+                    if budget_amount is not None and budget_amount > 0:
+                        has_budgets = True
+                        break
+            
+            return {
+                "has_balance": has_balance,
+                "has_budgets": has_budgets,
+                "setup_complete": has_balance and has_budgets
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get user setup status: {e}")
+            return {
+                "has_balance": False,
+                "has_budgets": False,
+                "setup_complete": False
+            }
+
+    def set_category_budget(self, category: str, amount: float) -> Dict[str, Any]:
+        """Set budget for a specific category (alias for set_budget with better naming)."""
+        return self.set_budget(category, amount)
+
+    def get_budget_setup_progress(self) -> Dict[str, Any]:
+        """Get progress through budget setup process."""
+        try:
+            # This is a simplified implementation
+            # In production, you'd track which categories have been configured
+            priority_categories = [
+                "Food & Dining",
+                "Transportation", 
+                "Shopping",
+                "Bills & Utilities",
+                "Entertainment"
+            ]
+            
+            # Find which categories already have budgets
+            configured_categories = []
+            if "Budget" in self.workbook.sheetnames:
+                budget_sheet = self.workbook["Budget"]
+                for row in range(2, budget_sheet.max_row + 1):
+                    category = budget_sheet.cell(row=row, column=1).value
+                    budget_amount = budget_sheet.cell(row=row, column=2).value
+                    if category and budget_amount and budget_amount > 0:
+                        configured_categories.append(category)
+            
+            # Find next category to configure
+            next_category = None
+            for cat in priority_categories:
+                if cat not in configured_categories:
+                    next_category = cat
+                    break
+            
+            return {
+                "configured_categories": configured_categories,
+                "current_category": next_category or priority_categories[0],
+                "total_priority_categories": len(priority_categories),
+                "configured_count": len(configured_categories)
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get budget setup progress: {e}")
+            return {
+                "configured_categories": [],
+                "current_category": "Food & Dining",
+                "total_priority_categories": 5,
+                "configured_count": 0
+            }
+
+    def mark_user_setup_complete(self) -> Dict[str, Any]:
+        """Mark that user has completed the initial setup."""
+        try:
+            if "User Setup" not in self.workbook.sheetnames:
+                self.set_user_balance(0)  # This will create the sheet
+            
+            setup_sheet = self.workbook["User Setup"]
+            
+            # Find or create setup complete row
+            setup_row = None
+            for row in range(2, setup_sheet.max_row + 2):
+                if setup_sheet.cell(row=row, column=1).value == "Setup Complete":
+                    setup_row = row
+                    break
+            
+            if setup_row is None:
+                setup_row = setup_sheet.max_row + 1
+                setup_sheet.cell(row=setup_row, column=1, value="Setup Complete")
+            
+            setup_sheet.cell(row=setup_row, column=2, value="Yes")
+            setup_sheet.cell(row=setup_row, column=3, value=datetime.now().strftime("%Y-%m-%d %H:%M"))
+            
+            self.save_workbook()
+            
+            return {"success": True, "message": "User setup marked as complete"}
+            
+        except Exception as e:
+            logger.error(f"Failed to mark setup complete: {e}")
+            return {"success": False, "error": str(e)}
+
+    def get_user_budgets(self) -> Dict[str, Any]:
+        """Get all user-configured budgets."""
+        try:
+            budgets = []
+            
+            if "Budget" in self.workbook.sheetnames:
+                budget_sheet = self.workbook["Budget"]
+                for row in range(2, budget_sheet.max_row + 1):
+                    category = budget_sheet.cell(row=row, column=1).value
+                    amount = budget_sheet.cell(row=row, column=2).value
+                    
+                    if category and amount and amount > 0:
+                        budgets.append({
+                            "category": category,
+                            "amount": amount
+                        })
+            
+            return {
+                "success": True,
+                "budgets": budgets
+            }
+            
+        except Exception as e:
+            logger.error(f"Failed to get user budgets: {e}")
+            return {"success": False, "error": str(e)}
+
     def save_workbook(self):
         """Save the workbook to disk."""
         try:

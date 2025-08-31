@@ -1,5 +1,5 @@
 from typing import Optional, Dict, Any, List
-from agno.tools.base import Tool
+from agno.tools import Toolkit
 from telegram import Bot, Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import asyncio
@@ -9,7 +9,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-class TelegramBotTool(Tool):
+class TelegramBotTool(Toolkit):
     """Tool for interacting with Telegram Bot API."""
     
     def __init__(self, token: str, chat_id: Optional[str] = None):

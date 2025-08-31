@@ -7,9 +7,7 @@ from telegram import Update
 from ..config.settings import settings
 from ..tools.excel_tools import ExcelFinanceManager
 from ..tools.telegram_tools import TelegramMessageHandler, TelegramBotTool
-from ..agents.expense_agent import ExpenseTrackingAgent
-from ..agents.budget_agent import BudgetMonitoringAgent
-from ..agents.insights_agent import FinancialInsightsAgent
+from ..agents.manager_agent import FinanceManagerAgent
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +25,8 @@ class FinanceTrackerWorkflow(Workflow):
             chat_id=settings.telegram_chat_id
         )
         
-        # Initialize agents
-        self.expense_agent = ExpenseTrackingAgent(self.excel_manager)
-        self.budget_agent = BudgetMonitoringAgent(self.excel_manager)
-        self.insights_agent = FinancialInsightsAgent(self.excel_manager, self.telegram_tool)
+        # Initialize manager agent (handles all specialized agents internally)
+        self.manager_agent = FinanceManagerAgent(self.excel_manager)
         
         # Initialize Telegram message handler
         self.message_handler = TelegramMessageHandler(
@@ -41,49 +37,22 @@ class FinanceTrackerWorkflow(Workflow):
         logger.info("FinanceTrackerWorkflow initialized successfully")
     
     async def handle_telegram_message(self, message_type: str, update: Update) -> str:
-        """Handle incoming Telegram messages and route to appropriate agents."""
+        """Handle incoming Telegram messages through the manager agent."""
         try:
             user_message = update.message.text
-            user_id = update.effective_user.id
+            user_id = str(update.effective_user.id)
             chat_id = str(update.effective_chat.id)
             
-            logger.info(f"Processing {message_type} message from user {user_id}: {user_message}")
+            logger.info(f"Processing message from user {user_id}: {user_message}")
             
-            if message_type == "expense":
-                # Handle expense logging
-                response = await self.expense_agent.process_expense_message(user_message)
-                
-                # Check for budget alerts after logging expense
-                if "✅" in response:  # Expense was logged successfully
-                    # Extract expense data if needed for alerts
-                    # This is simplified - in production would extract from agent response
-                    pass
-                
-                return response
+            # Let the manager agent handle all message processing
+            response = await self.manager_agent.process_user_message(
+                message=user_message,
+                user_id=user_id,
+                chat_id=chat_id
+            )
             
-            elif message_type == "budget":
-                # Handle budget-related commands
-                return await self.budget_agent.process_budget_command(user_message)
-            
-            elif message_type == "balance":
-                # Get current month spending summary
-                return await self.get_balance_summary()
-            
-            elif message_type == "report":
-                # Generate and send monthly report
-                return await self.generate_monthly_report(chat_id)
-            
-            else:
-                return """
-🤖 I'm here to help with your finances!
-
-Try these commands:
-• Type expenses naturally: "Spent $25 on lunch"
-• /budget - Manage your budgets
-• /balance - Check current spending
-• /report - Generate monthly report
-• /help - Show all commands
-"""
+            return response
         
         except Exception as e:
             logger.error(f"Error handling Telegram message: {e}")
@@ -246,10 +215,10 @@ Type /help for all available commands.
                 "telegram_configured": bool(settings.telegram_bot_token),
                 "ai_model_configured": bool(settings.anthropic_api_key or settings.openai_api_key),
                 "agents_loaded": {
-                    "expense_agent": self.expense_agent is not None,
-                    "budget_agent": self.budget_agent is not None,
-                    "insights_agent": self.insights_agent is not None
-                }
+                    "manager_agent": self.manager_agent is not None,
+                    "specialized_agents": hasattr(self.manager_agent, 'expense_agent') if self.manager_agent else False
+                },
+                "architecture_version": "2.0 - Manager Agent with Onboarding"
             }
             
             # Check Excel file health
@@ -261,6 +230,18 @@ Type /help for all available commands.
                 except:
                     status["excel_accessible"] = False
                     status["total_expenses"] = 0
+            
+            # Check user setup status
+            if self.manager_agent:
+                try:
+                    setup_status = self.excel_manager.get_user_setup_status()
+                    status["user_setup"] = {
+                        "has_balance": setup_status.get("has_balance", False),
+                        "has_budgets": setup_status.get("has_budgets", False),
+                        "setup_complete": setup_status.get("setup_complete", False)
+                    }
+                except:
+                    status["user_setup"] = {"error": "Unable to check setup status"}
             
             return status
             

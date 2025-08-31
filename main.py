@@ -38,7 +38,7 @@ def check_prerequisites():
 
 async def main():
     """Main application entry point."""
-    print("🤖 Finance Tracker Agent")
+    print("[ROBOT] Finance Tracker Agent")
     print("=" * 50)
     
     # Set up logging
@@ -48,34 +48,34 @@ async def main():
     # Check prerequisites
     errors = check_prerequisites()
     if errors:
-        print("\n❌ Configuration errors:")
+        print("\n[ERROR] Configuration errors:")
         for error in errors:
-            print(f"   • {error}")
+            print(f"   - {error}")
         print("\nPlease check your .env file and ensure all required variables are set.")
         print("Use .env.template as a reference.")
         return
     
-    print("✅ Configuration validated")
+    print("[OK] Configuration validated")
     
     try:
         # Initialize the workflow
-        print("🔧 Initializing Finance Tracker Workflow...")
+        print("[INIT] Initializing Finance Tracker Workflow...")
         workflow = FinanceTrackerWorkflow()
         
         # Show system status
         status = workflow.get_system_status()
-        print(f"\n📊 System Status:")
-        print(f"   • Excel file: {'✅' if status['excel_file_exists'] else '❌'}")
-        print(f"   • Telegram: {'✅' if status['telegram_configured'] else '❌'}")
-        print(f"   • AI Model: {'✅' if status['ai_model_configured'] else '❌'}")
-        print(f"   • Agents loaded: {'✅' if all(status['agents_loaded'].values()) else '❌'}")
+        print(f"\n[STATUS] System Status:")
+        print(f"   - Excel file: {'[OK]' if status['excel_file_exists'] else '[ERROR]'}")
+        print(f"   - Telegram: {'[OK]' if status['telegram_configured'] else '[ERROR]'}")
+        print(f"   - AI Model: {'[OK]' if status['ai_model_configured'] else '[ERROR]'}")
+        print(f"   - Agents loaded: {'[OK]' if all(status['agents_loaded'].values()) else '[ERROR]'}")
         
         if settings.telegram_chat_id:
-            print(f"   • Default chat ID: {settings.telegram_chat_id}")
+            print(f"   - Default chat ID: {settings.telegram_chat_id}")
         
-        print(f"\n🚀 Starting Telegram bot...")
-        print(f"📱 Bot will respond to messages in Telegram")
-        print(f"💰 Excel file: {settings.excel_file_path}")
+        print(f"\n[START] Starting Telegram bot...")
+        print(f"[INFO] Bot will respond to messages in Telegram")
+        print(f"[FILE] Excel file: {settings.excel_file_path}")
         print(f"\nPress Ctrl+C to stop the bot")
         print("-" * 50)
         
@@ -83,14 +83,14 @@ async def main():
         await workflow.start_telegram_bot()
         
     except KeyboardInterrupt:
-        print("\n\n👋 Shutting down Finance Tracker Agent...")
+        print("\n\n[SHUTDOWN] Shutting down Finance Tracker Agent...")
         logger.info("Application shutdown requested by user")
     except Exception as e:
         logger.error(f"Fatal error: {e}")
-        print(f"\n❌ Fatal error: {e}")
+        print(f"\n[ERROR] Fatal error: {e}")
         print("Check the log file (finance_tracker.log) for more details")
     finally:
-        print("✅ Finance Tracker Agent stopped")
+        print("[DONE] Finance Tracker Agent stopped")
 
 
 if __name__ == "__main__":
